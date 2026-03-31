@@ -39,7 +39,7 @@ exports.createUser = async (req, res) => {
       performedBy: req.user.id,
       metadata: { role },
     });
-    
+
     res.status(201).json({
       id: newUser._id,
       name: newUser.name,
@@ -52,12 +52,25 @@ exports.createUser = async (req, res) => {
 };
 exports.getUsers = async (req, res) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+
+    const skip = (page - 1) * limit;
+
+    const totalRecords = await User.countDocuments();
     const users = await User.find()
       .select("-password")
       .populate("role", "name")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
 
-    res.json(users);
+    res.json({
+      users,
+      totalRecords,
+      page,
+      limit,
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -82,10 +95,12 @@ exports.getSingleUser = async (req, res) => {
 exports.updateOwnProfile = async (req, res) => {
   try {
     const userId = req.user.id;
+    const { name, phone, address, currentPassword, newPassword } = req.body;
 
-    const { name, phone, address } = req.body;
-
-    const user = await User.findById(userId);
+    const user = await User.findById(userId).populate({
+      path: "role",
+      populate: { path: "permissions" },
+    });
 
     if (!user) {
       return res.status(404).json({ message: "User not found" });
@@ -95,6 +110,27 @@ exports.updateOwnProfile = async (req, res) => {
     user.phone = phone || user.phone;
     user.address = address || user.address;
 
+    // password change
+    if (newPassword) {
+      if (!currentPassword) {
+        return res.status(400).json({
+          message: "Current password is required to change password",
+        });
+      }
+
+      const isMatch = await bcrypt.compare(currentPassword, user.password);
+
+      if (!isMatch) {
+        return res.status(400).json({
+          message: "Current password is incorrect",
+        });
+      }
+
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      user.password = hashedPassword;
+    }
+
+    // profile image update
     if (req.file) {
       if (user.profileImage?.publicId) {
         await cloudinary.uploader.destroy(user.profileImage.publicId);
@@ -120,20 +156,26 @@ exports.updateOwnProfile = async (req, res) => {
 
     await user.save();
 
+    const permissions = user.role.permissions.map((p) => p.name);
+
     await logAudit({
-      action: "USER_PROFILE_UPDATED",
+      action: newPassword ? "USER_PASSWORD_CHANGED" : "USER_PROFILE_UPDATED",
       entityType: "User",
       entityId: user._id,
       performedBy: req.user.id,
     });
 
     res.json({
-      id: user._id,
-      name: user.name,
-      email: user.email,
-      phone: user.phone,
-      address: user.address,
-      profileImage: user.profileImage,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        address: user.address,
+        profileImage: user.profileImage,
+        role: user.role.name,
+        permissions,
+      },
     });
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -143,7 +185,7 @@ exports.updateOwnProfile = async (req, res) => {
 exports.adminUpdateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, email, phone, address, role, isActive } = req.body;
+    const { role, isActive } = req.body;
 
     const user = await User.findById(id);
 
@@ -151,15 +193,12 @@ exports.adminUpdateUser = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    user.name = name ?? user.name;
-    user.email = email ?? user.email;
-    user.phone = phone ?? user.phone;
-    user.address = address ?? user.address;
-
+    // update role
     if (role) {
       user.role = role;
     }
 
+    // update active status
     if (typeof isActive === "boolean") {
       user.isActive = isActive;
     }
@@ -167,11 +206,14 @@ exports.adminUpdateUser = async (req, res) => {
     await user.save();
 
     await logAudit({
-      action: "USER_UPDATED_BY_ADMIN",
+      action: "USER_ROLE_STATUS_UPDATED",
       entityType: "User",
       entityId: user._id,
       performedBy: req.user.id,
-      metadata: { role, isActive },
+      metadata: {
+        role,
+        isActive,
+      },
     });
 
     res.json({
@@ -185,3 +227,4 @@ exports.adminUpdateUser = async (req, res) => {
     res.status(400).json({ message: error.message });
   }
 };
+

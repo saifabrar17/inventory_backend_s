@@ -3,6 +3,7 @@ const router = express.Router();
 const controller = require("./auth.controller");
 const upload = require("../../middlewares/upload.middleware");
 
+// router.post("/register", controller.register);
 router.post("/register", upload.single("profileImage"), controller.register);
 router.post("/login", controller.login);
 router.post("/refresh", controller.refreshAccessToken);

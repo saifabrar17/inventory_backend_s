@@ -8,7 +8,7 @@ const permissionMiddleware = require("../../middlewares/permission.middleware");
 router.get(
   "/",
   authMiddleware,
-  permissionMiddleware("user:create"),
+  permissionMiddleware("product:view"),
   controller.getRoles
 );
 

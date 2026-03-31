@@ -4,7 +4,15 @@ const cors = require("cors");
 const authRoutes = require("./modules/auth/auth.routes");
 const authMiddleware = require("./middlewares/auth.middleware");
 const roleMiddleware = require("./middlewares/role.middleware");
+const permissionMiddleware = require("./middlewares/permission.middleware");
+const categoryRoutes = require("./modules/categories/category.routes");
+const productRoutes = require("./modules/products/product.routes");
+const warehouseRoutes = require("./modules/warehouses/warehouse.routes");
+const stockMovementRoutes = require("./modules/stockMovements/stockMovement.routes");
+const purchaseRoutes = require("./modules/purchases/purchase.routes");
+const saleRoutes = require("./modules/sales/sale.routes");
 const auditRoutes = require("./modules/audit/audit.routes");
+const dashboardRoutes = require("./modules/dashboard/dashboard.routes");
 const userRoutes = require("./modules/users/user.route");
 const roleRoutes = require("./modules/roles/role.routes");
 const multer = require("multer");
@@ -37,7 +45,15 @@ app.get(
     });
   },
 );
+
+app.use("/api/categories", categoryRoutes);
+app.use("/api/products", productRoutes);
+app.use("/api/warehouses", warehouseRoutes);
+app.use("/api/stock", stockMovementRoutes);
+app.use("/api/purchases", purchaseRoutes);
+app.use("/api/sales", saleRoutes);
 app.use("/api/audit", auditRoutes);
+app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/roles", roleRoutes);
 app.use("/api/users", userRoutes);
 

@@ -61,10 +61,13 @@ exports.login = async (req, res) => {
     path: "role",
     populate: { path: "permissions" },
   });
-
   if (!user) {
     return res.status(400).json({ message: "Invalid credentials" });
   }
+  if(user.isActive === false){
+    return res.status(403).json({ message: "Your account is inactive. Please contact admin." });
+  }
+  // console.log("USER WITH POPULATE:", user);
 
   const match = await bcrypt.compare(password, user.password);
   if (!match) {
@@ -103,8 +106,10 @@ exports.login = async (req, res) => {
       name: user.name,
       email: user.email,
       profileImage: user.profileImage,
+      address: user.address,
       role: user.role.name,
       permissions,
+      phone: user.phone,
     },
   });
 };
@@ -142,16 +147,18 @@ exports.refreshAccessToken = async (req, res) => {
         permissions,
       },
       process.env.JWT_SECRET,
-      { expiresIn: "15m" },
+      { expiresIn: "15m" }
     );
 
-    res.json({
+    return res.json({
       accessToken: newAccessToken,
       user: {
         id: user._id,
         name: user.name,
         email: user.email,
         profileImage: user.profileImage,
+        address: user.address,
+        phone: user.phone,
         role: user.role.name,
         permissions,
       },
@@ -171,36 +178,3 @@ exports.logout = async (req, res) => {
   res.json({ message: "Logged out successfully" });
 };
 
-// exports.login = async (req, res) => {
-//   const { email, password } = req.body;
-
-//   const user = await User.findOne({ email }).populate({
-//     path: "role",
-//     populate: {
-//       path: "permissions",
-//     },
-//   });
-//   //console.log("USER WITH POPULATE:", JSON.stringify(user, null, 2));
-//   if (!user) {
-//     return res.status(400).json({ message: "Invalid credentials" });
-//   }
-
-//   const match = await bcrypt.compare(password, user.password);
-//   if (!match) {
-//     return res.status(400).json({ message: "Invalid credentials" });
-//   }
-
-//   const permissions = user.role.permissions.map((p) => p.name);
-
-//   const token = jwt.sign(
-//     {
-//       id: user._id,
-//       role: user.role.name,
-//       permissions,
-//     },
-//     process.env.JWT_SECRET,
-//     { expiresIn: "1m" },
-//   );
-
-//   res.json({ token });
-// };
