@@ -7,19 +7,19 @@ const logAudit = require("../../utils/auditLogger");
 exports.createSale = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
-
+// console.log("Creating sale with data:", req.body);
   try {
     const {
       warehouse,
       customerName,
-      // customerPhone,
+      customerPhone,
       customerAddress,
       items,
     } = req.body;
 
-    // if (!customerName || !customerPhone) {
-    //   throw new Error("Customer name and phone are required");
-    // }
+    if (!customerName || !customerPhone) {
+      throw new Error("Customer name and phone are required");
+    }
 
     const invoiceNumber = await generateInvoiceNumber();
 
@@ -122,7 +122,7 @@ exports.createSale = async (req, res) => {
           invoiceNumber,
           warehouse,
           customerName,
-          // customerPhone,
+          customerPhone,
           customerAddress,
           items: processedItems,
           totalRevenue,
@@ -199,7 +199,7 @@ exports.getSingleSale = async (req, res) => {
     })
       .populate("warehouse", "name")
       .populate("createdBy", "name email")
-      .populate("items.product", "name");
+      .populate("items.product", "name images");
 
     if (!sale) {
       return res.status(404).json({ message: "Sale not found" });

@@ -27,6 +27,12 @@ router.get(
   permissionMiddleware("user:create"),
   controller.getSingleUser
 );
+router.get(
+  "/stats/:id",
+  authMiddleware,
+  permissionMiddleware("user:create"),
+  controller.getSingleUserStats
+);
 
 // Edit own profile
 router.put(

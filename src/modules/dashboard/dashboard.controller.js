@@ -3,6 +3,294 @@ const Sale = require("../sales/sale.model");
 const StockMovement = require("../stockMovements/stockMovement.model");
 const mongoose = require("mongoose");
 
+exports.getDashboardSummary = async (req, res) => {
+  try {
+    const { startDate, endDate, limit, threshold, days } = req.query;
+
+    const filter = buildDateFilter(startDate, endDate);
+    const topLimit = Number(limit) || 5;
+    const lowStockThreshold = Number(threshold) || 5;
+    const deadStockDays = Number(days) || 30;
+
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - deadStockDays);
+
+    const [
+      revenue,
+      inventory,
+      profit,
+      salesTrend,
+      topProducts,
+      lowStock,
+      recentSales,
+      deadStock,
+      categorySales,
+    ] = await Promise.all([
+      // Revenue
+      Sale.aggregate([
+        { $match: filter },
+        {
+          $group: {
+            _id: null,
+            totalRevenue: { $sum: "$totalRevenue" },
+          },
+        },
+      ]),
+
+      // Inventory Value
+      StockMovement.aggregate([
+        {
+          $group: {
+            _id: "$product",
+            totalInQty: {
+              $sum: { $cond: [{ $eq: ["$type", "IN"] }, "$quantity", 0] },
+            },
+            totalOutQty: {
+              $sum: { $cond: [{ $eq: ["$type", "OUT"] }, "$quantity", 0] },
+            },
+            totalInValue: {
+              $sum: {
+                $cond: [
+                  { $eq: ["$type", "IN"] },
+                  { $multiply: ["$quantity", "$unitCost"] },
+                  0,
+                ],
+              },
+            },
+          },
+        },
+        {
+          $project: {
+            currentStock: { $subtract: ["$totalInQty", "$totalOutQty"] },
+            averageCost: {
+              $cond: [
+                { $eq: ["$totalInQty", 0] },
+                0,
+                { $divide: ["$totalInValue", "$totalInQty"] },
+              ],
+            },
+          },
+        },
+        {
+          $project: {
+            inventoryValue: {
+              $multiply: ["$currentStock", "$averageCost"],
+            },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            totalInventoryValue: { $sum: "$inventoryValue" },
+          },
+        },
+      ]),
+
+      // Profit
+      Sale.aggregate([
+        { $match: filter },
+        {
+          $group: {
+            _id: null,
+            totalProfit: { $sum: "$totalProfit" },
+          },
+        },
+      ]),
+
+      // Sales Trend
+      Sale.aggregate([
+        { $match: filter },
+        {
+          $group: {
+            _id: {
+              year: { $year: "$createdAt" },
+              month: { $month: "$createdAt" },
+              day: { $dayOfMonth: "$createdAt" },
+            },
+            revenue: { $sum: "$totalRevenue" },
+          },
+        },
+        { $sort: { "_id.year": 1, "_id.month": 1, "_id.day": 1 } },
+      ]),
+
+      // Top Products
+      Sale.aggregate([
+        { $match: filter },
+        { $unwind: "$items" },
+        {
+          $group: {
+            _id: "$items.product",
+            totalSold: { $sum: "$items.quantity" },
+            totalRevenue: {
+              $sum: { $multiply: ["$items.quantity", "$items.sellingPrice"] },
+            },
+          },
+        },
+        { $sort: { totalSold: -1 } },
+        { $limit: topLimit },
+        {
+          $lookup: {
+            from: "products",
+            localField: "_id",
+            foreignField: "_id",
+            as: "product",
+          },
+        },
+        { $unwind: "$product" },
+        {
+          $project: {
+            productId: "$product._id",
+            productName: "$product.name",
+            totalSold: 1,
+            totalRevenue: 1,
+          },
+        },
+      ]),
+      //  Low Stock
+      StockMovement.aggregate([
+        {
+          $group: {
+            _id: "$product",
+            totalIn: {
+              $sum: { $cond: [{ $eq: ["$type", "IN"] }, "$quantity", 0] },
+            },
+            totalOut: {
+              $sum: { $cond: [{ $eq: ["$type", "OUT"] }, "$quantity", 0] },
+            },
+          },
+        },
+
+        {
+          $project: {
+            productId: "$_id",
+            currentStock: { $subtract: ["$totalIn", "$totalOut"] },
+          },
+        },
+
+        {
+          $match: {
+            currentStock: { $lte: lowStockThreshold },
+          },
+        },
+
+        {
+          $lookup: {
+            from: "products", 
+            localField: "productId",
+            foreignField: "_id",
+            as: "product",
+          },
+        },
+
+        {
+          $unwind: "$product",
+        },
+
+        {
+          $project: {
+            productId: 1,
+            productName: "$product.name",
+            sku: "$product.sku",
+            currentStock: 1,
+          },
+        },
+      ]),
+
+      // Recent Sales
+      Sale.find()
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .populate("warehouse", "name"),
+
+      // Dead Stock
+      mongoose.model("Product").aggregate([
+        {
+          $lookup: {
+            from: "sales",
+            localField: "_id",
+            foreignField: "items.product",
+            as: "sales",
+          },
+        },
+        {
+          $addFields: {
+            lastSold: { $max: "$sales.createdAt" },
+          },
+        },
+        {
+          $match: {
+            $or: [
+              { lastSold: { $exists: false } },
+              { lastSold: { $lt: cutoffDate } },
+            ],
+          },
+        },
+        {
+          $project: {
+            name: 1,
+            sku: 1,
+            lastSold: 1,
+          },
+        },
+      ]),
+
+      // Sales by Category
+      Sale.aggregate([
+        { $match: filter },
+        { $unwind: "$items" },
+        {
+          $lookup: {
+            from: "products",
+            localField: "items.product",
+            foreignField: "_id",
+            as: "product",
+          },
+        },
+        { $unwind: "$product" },
+        {
+          $lookup: {
+            from: "categories",
+            localField: "product.category",
+            foreignField: "_id",
+            as: "category",
+          },
+        },
+        { $unwind: "$category" },
+        {
+          $group: {
+            _id: "$category._id",
+            categoryName: { $first: "$category.name" },
+            totalRevenue: {
+              $sum: {
+                $multiply: ["$items.quantity", "$items.sellingPrice"],
+              },
+            },
+            totalSold: { $sum: "$items.quantity" },
+          },
+        },
+        { $sort: { totalRevenue: -1 } },
+      ]),
+    ]);
+
+    res.json({
+      summary: {
+        revenue: revenue[0]?.totalRevenue || 0,
+        inventoryValue: inventory[0]?.totalInventoryValue || 0,
+        profit: profit[0]?.totalProfit || 0,
+      },
+      salesTrend,
+      topProducts,
+      lowStock,
+      recentSales,
+      deadStock,
+      categorySales,
+    });
+  } catch (error) {
+    console.error("Dashboard Error:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 exports.getRevenueSummary = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
@@ -340,7 +628,6 @@ exports.getInventoryMovement = async (req, res) => {
 
 exports.getProfitByProduct = async (req, res) => {
   try {
-
     const { startDate, endDate, limit } = req.query;
     const max = Number(limit) || 10;
 
@@ -356,10 +643,10 @@ exports.getProfitByProduct = async (req, res) => {
           _id: "$items.product",
           totalProfit: { $sum: "$items.profit" },
           totalRevenue: {
-            $sum: { $multiply: ["$items.quantity", "$items.sellingPrice"] }
+            $sum: { $multiply: ["$items.quantity", "$items.sellingPrice"] },
           },
-          totalSold: { $sum: "$items.quantity" }
-        }
+          totalSold: { $sum: "$items.quantity" },
+        },
       },
 
       { $sort: { totalProfit: -1 } },
@@ -371,8 +658,8 @@ exports.getProfitByProduct = async (req, res) => {
           from: "products",
           localField: "_id",
           foreignField: "_id",
-          as: "product"
-        }
+          as: "product",
+        },
       },
 
       { $unwind: "$product" },
@@ -383,14 +670,12 @@ exports.getProfitByProduct = async (req, res) => {
           productName: "$product.name",
           totalProfit: 1,
           totalRevenue: 1,
-          totalSold: 1
-        }
-      }
-
+          totalSold: 1,
+        },
+      },
     ]);
 
     res.json(result);
-
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -398,7 +683,6 @@ exports.getProfitByProduct = async (req, res) => {
 
 exports.getSalesByCategory = async (req, res) => {
   try {
-
     const { startDate, endDate } = req.query;
 
     const filter = buildDateFilter(startDate, endDate);
@@ -413,8 +697,8 @@ exports.getSalesByCategory = async (req, res) => {
           from: "products",
           localField: "items.product",
           foreignField: "_id",
-          as: "product"
-        }
+          as: "product",
+        },
       },
 
       { $unwind: "$product" },
@@ -424,8 +708,8 @@ exports.getSalesByCategory = async (req, res) => {
           from: "categories",
           localField: "product.category",
           foreignField: "_id",
-          as: "category"
-        }
+          as: "category",
+        },
       },
 
       { $unwind: "$category" },
@@ -436,19 +720,17 @@ exports.getSalesByCategory = async (req, res) => {
           categoryName: { $first: "$category.name" },
           totalRevenue: {
             $sum: {
-              $multiply: ["$items.quantity", "$items.sellingPrice"]
-            }
+              $multiply: ["$items.quantity", "$items.sellingPrice"],
+            },
           },
-          totalSold: { $sum: "$items.quantity" }
-        }
+          totalSold: { $sum: "$items.quantity" },
+        },
       },
 
-      { $sort: { totalRevenue: -1 } }
-
+      { $sort: { totalRevenue: -1 } },
     ]);
 
     res.json(result);
-
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

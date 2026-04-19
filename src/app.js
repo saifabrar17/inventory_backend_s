@@ -4,7 +4,7 @@ const cors = require("cors");
 const authRoutes = require("./modules/auth/auth.routes");
 const authMiddleware = require("./middlewares/auth.middleware");
 const roleMiddleware = require("./middlewares/role.middleware");
-const permissionMiddleware = require("./middlewares/permission.middleware");
+const searchRoutes = require("./modules/search/search.routes");
 const categoryRoutes = require("./modules/categories/category.routes");
 const productRoutes = require("./modules/products/product.routes");
 const warehouseRoutes = require("./modules/warehouses/warehouse.routes");
@@ -46,6 +46,7 @@ app.get(
   },
 );
 
+app.use("/api/search", searchRoutes);
 app.use("/api/categories", categoryRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/warehouses", warehouseRoutes);

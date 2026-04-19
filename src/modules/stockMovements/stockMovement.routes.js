@@ -1,7 +1,6 @@
 const express = require("express");
 const router = express.Router();
 const controller = require("./stockMovement.controller");
-
 const authMiddleware = require("../../middlewares/auth.middleware");
 const permissionMiddleware = require("../../middlewares/permission.middleware");
 

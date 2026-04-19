@@ -1,3 +1,6 @@
+const { default: mongoose } = require("mongoose");
+const Sale = require("../sales/sale.model");
+const Purchase = require("../purchases/purchase.model");
 const cloudinary = require("../../config/cloudinary");
 const logAudit = require("../../utils/auditLogger");
 const User = require("./user.model");
@@ -90,6 +93,98 @@ exports.getSingleUser = async (req, res) => {
     res.json(user);
   } catch (error) {
     res.status(400).json({ message: error.message });
+  }
+};
+exports.getSingleUserStats = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid user id" });
+    }
+
+    const user = await User.findById(id)
+      .select("-password")
+      .populate("role", "name");
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Last 5 Sales
+    const recentSales = await Sale.find({ createdBy: id })
+      .sort({ createdAt: -1 })
+      .limit(5);
+
+    // Last 5 Purchases
+    const recentPurchases = await Purchase.find({ createdBy: id })
+      .sort({ createdAt: -1 })
+      .limit(5);
+
+    // Aggregated Sales Data (Revenue, Cost, Profit)
+    const salesStats = await Sale.aggregate([
+      { $match: { createdBy: new mongoose.Types.ObjectId(id) } },
+      { $unwind: "$items" },
+      {
+        $group: {
+          _id: null,
+          totalRevenue: {
+            $sum: {
+              $multiply: ["$items.quantity", "$items.sellingPrice"],
+            },
+          },
+          totalCost: {
+            $sum: {
+              $multiply: ["$items.quantity", "$items.costPrice"],
+            },
+          },
+          totalItemsSold: { $sum: "$items.quantity" },
+          totalSales: { $addToSet: "$_id" },
+        },
+      },
+      {
+        $project: {
+          totalRevenue: 1,
+          totalCost: 1,
+          totalProfit: { $subtract: ["$totalRevenue", "$totalCost"] },
+          totalItemsSold: 1,
+          totalSalesCount: { $size: "$totalSales" },
+        },
+      },
+    ]);
+
+    // Purchase Summary
+    const purchaseStats = await Purchase.aggregate([
+      { $match: { createdBy: new mongoose.Types.ObjectId(id) } },
+      {
+        $group: {
+          _id: null,
+          totalPurchases: { $sum: 1 },
+          lastPurchaseDate: { $max: "$createdAt" },
+        },
+      },
+    ]);
+
+    res.json({
+      user,
+      stats: {
+        sales: salesStats[0] || {
+          totalRevenue: 0,
+          totalCost: 0,
+          totalProfit: 0,
+          totalItemsSold: 0,
+          totalSalesCount: 0,
+        },
+        purchases: purchaseStats[0] || {
+          totalPurchases: 0,
+          lastPurchaseDate: null,
+        },
+      },
+      recentSales,
+      recentPurchases,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
   }
 };
 exports.updateOwnProfile = async (req, res) => {

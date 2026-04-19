@@ -6,6 +6,13 @@ const authMiddleware = require("../../middlewares/auth.middleware");
 const permissionMiddleware = require("../../middlewares/permission.middleware");
 
 router.get(
+  "/dashboard",
+  authMiddleware,
+  permissionMiddleware("product:view"),
+  controller.getDashboardSummary
+);
+
+router.get(
   "/revenue",
   authMiddleware,
   permissionMiddleware("report:view"),
