@@ -5,6 +5,9 @@ const Role = require("../roles/role.model");
 const Permission = require("../permissions/permission.model");
 const cloudinary = require("../../config/cloudinary");
 const RefreshToken = require("./refreshToken.model");
+const { verifyCaptcha } = require("../../utils/verifyCaptcha");
+const { verifyTurnstile } = require("../../utils/verifyTurnstile");
+
 
 exports.register = async (req, res) => {
   try {
@@ -55,63 +58,84 @@ exports.register = async (req, res) => {
 };
 
 exports.login = async (req, res) => {
-  const { email, password } = req.body;
+  try {
+    const { email, password, captchaToken } = req.body;
+    if (!captchaToken) {
+      return res.status(400).json({
+        message: "Captcha is required",
+      });
+    }
+    const captchaRes = await verifyTurnstile(captchaToken);
+    if (!captchaRes.success) {
+      return res.status(400).json({
+        message: "Captcha verification failed",
+      });
+    }
 
-  const user = await User.findOne({ email }).populate({
-    path: "role",
-    populate: { path: "permissions" },
-  });
-  if (!user) {
-    return res.status(400).json({ message: "Invalid credentials" });
+    const user = await User.findOne({ email }).populate({
+      path: "role",
+      populate: { path: "permissions" },
+    });
+
+    if (!user) {
+      return res.status(400).json({ message: "Invalid credentials" });
+    }
+
+    if (user.isActive === false) {
+      return res.status(403).json({
+        message: "Your account is inactive. Please contact admin.",
+      });
+    }
+
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) {
+      return res.status(400).json({ message: "Invalid credentials" });
+    }
+
+    const permissions = user.role.permissions.map((p) => p.name);
+
+    const accessToken = jwt.sign(
+      {
+        id: user._id,
+        role: user.role.name,
+        permissions,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "15m" }
+    );
+
+    const refreshToken = jwt.sign(
+      { id: user._id },
+      process.env.JWT_REFRESH_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    await RefreshToken.create({
+      user: user._id,
+      token: refreshToken,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    });
+
+    return res.json({
+      accessToken,
+      refreshToken,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        profileImage: user.profileImage,
+        address: user.address,
+        role: user.role.name,
+        permissions,
+        phone: user.phone,
+      },
+    });
+  } catch (error) {
+    console.error("LOGIN ERROR:", error); // 👈 IMPORTANT
+    return res.status(500).json({
+      message: "Server error",
+    });
   }
-  if(user.isActive === false){
-    return res.status(403).json({ message: "Your account is inactive. Please contact admin." });
-  }
-  // console.log("USER WITH POPULATE:", user);
-
-  const match = await bcrypt.compare(password, user.password);
-  if (!match) {
-    return res.status(400).json({ message: "Invalid credentials" });
-  }
-
-  const permissions = user.role.permissions.map((p) => p.name);
-
-  const accessToken = jwt.sign(
-    {
-      id: user._id,
-      role: user.role.name,
-      permissions,
-    },
-    process.env.JWT_SECRET,
-    { expiresIn: "15m" },
-  );
-
-  const refreshToken = jwt.sign(
-    { id: user._id },
-    process.env.JWT_REFRESH_SECRET,
-    { expiresIn: "7d" },
-  );
-
-  await RefreshToken.create({
-    user: user._id,
-    token: refreshToken,
-    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-  });
-
-  return res.json({
-    accessToken,
-    refreshToken,
-    user: {
-      id: user._id,
-      name: user.name,
-      email: user.email,
-      profileImage: user.profileImage,
-      address: user.address,
-      role: user.role.name,
-      permissions,
-      phone: user.phone,
-    },
-  });
 };
 
 exports.refreshAccessToken = async (req, res) => {
@@ -147,7 +171,7 @@ exports.refreshAccessToken = async (req, res) => {
         permissions,
       },
       process.env.JWT_SECRET,
-      { expiresIn: "15m" }
+      { expiresIn: "15m" },
     );
 
     return res.json({
@@ -177,4 +201,3 @@ exports.logout = async (req, res) => {
 
   res.json({ message: "Logged out successfully" });
 };
-
